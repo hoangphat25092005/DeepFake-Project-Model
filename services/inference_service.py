@@ -58,3 +58,81 @@ class D3ModelService:
         
         except Exception as e:
             raise Exception(f"Error in image preprocessing: {e}")
+        
+    def predict_single(self, image_data: Union[bytes, Image.Image]) -> Dict:
+        if self.model is None:
+            raise Exception("Model is not loaded")
+        try:
+            image_tensor = self.preprocess_image(image_data=image_data)
+            #Run inference
+            with torch.no_grad():
+                output = self.model(image_tensor)
+                prob = torch.softmax(output, dim=1)
+                prediction = torch.argmax(prob, dim=1).item()
+                confidence = prob[0][prediction].item()
+
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            return {
+                'prediction': prediction,
+                'confidence': confidence,
+                'probabilities': {
+                    'real': prob[0][0].item(),
+                    'fake': prob[0][1].item()
+                }
+            }
+        
+        except Exception as e:
+            raise Exception(f"Error during prediction: {e}")
+
+    def predict_batch(self, images_data: List[Union[bytes, Image.Image]], batch_size: int) -> List[Dict]:
+        if self.model is None:
+            raise Exception("Model is not loaded")
+        
+        result = []
+
+        try:
+            for i in range(len(images_data)):
+                batch = images_data[i:i+batch_size]
+
+                #preprocess batch
+                batch_tensors = [self.preprocess_image(image_data=img) for img in batch]
+                batch_tensor = torch.cat(batch_tensors, dim=0)
+
+                #Run inference
+                with torch.no_grad():
+                    outputs = self.model(batch_tensor)
+                    probs = torch.softmax(outputs, dim=1)
+                    predictions = torch.argmax(probs, dim=1)
+
+                #Process results
+                for j in range(len(batch)):
+                    pred = predictions[j].item()
+                    conf = probs[j][pred].item()
+                    result.append({
+                        'prediction': pred,
+                        'confidence': conf,
+                        'probabilities': {
+                            'real': probs[j][0].item(),
+                            'fake': probs[j][1].item()
+                        }
+                    })
+
+                if self.device == 'cuda':
+                    torch.cuda.empty_cache()
+
+            return result
+    
+        except Exception as e:
+            raise Exception(f"Error during batch prediction: {e}")
+        
+    
+    def upload_model(self, checkpoint_path: str, model_name: str = 'd3net'):
+        if self.model is not None:
+            del self.model
+            self.model = None
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+
+    

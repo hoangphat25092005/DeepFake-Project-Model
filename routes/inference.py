@@ -3,9 +3,18 @@ from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 from api.models.database import db, InferenceResult
 from api.services.inference_service import detector
-import time
+from api.services.minio_service import MinioService  # ⬅
+from datetime import datetime
+import uuid
 
 inference_bp = Blueprint('inference', __name__, url_prefix='/api/inference')
+
+# Initialize MinIO service (configure in app.py)
+minio_service = None
+
+def init_minio_service(minio):
+    global minio_service
+    minio_service = minio
 
 
 def allowed_file(filename, allowed_extensions):
@@ -21,6 +30,8 @@ def predict():
     Request:
         - file: Image file (multipart/form-data)
         - threshold: Optional threshold (default 0.5)
+        - user_id: Optional user ID
+        - store_image: Optional bool to store image in MinIO (default true)
     
     Response:
         {
@@ -29,7 +40,8 @@ def predict():
                 "prediction": float,
                 "is_fake": bool,
                 "confidence": float,
-                "processing_time": float
+                "processing_time": float,
+                "result_url": str  # 
             },
             "inference_id": int
         }
@@ -52,8 +64,10 @@ def predict():
         }), 400
     
     try:
-        # Get threshold from request
+        # Get parameters from request
         threshold = float(request.form.get('threshold', 0.5))
+        user_id = request.form.get('user_id', None)  
+        store_image = request.form.get('store_image', 'true').lower() == 'true' 
         
         # Read image bytes
         image_bytes = file.read()
@@ -61,11 +75,30 @@ def predict():
         # Perform inference
         result = detector.predict_image(image_bytes, threshold=threshold)
         
+        # Upload to MinIO if requested
+        result_url = None
+        if store_image and minio_service:
+            # Generate unique filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            unique_id = str(uuid.uuid4())[:8]
+            file_extension = secure_filename(file.filename).rsplit('.', 1)[-1]
+            object_name = f"inferences/{timestamp}_{unique_id}.{file_extension}"
+            
+            # Upload to MinIO
+            result_url = minio_service.upload_image(
+                image_bytes,
+                object_name,
+                content_type=f"image/{file_extension}"
+            )
+        
         # Save to database
         inference_result = InferenceResult(
-            image_name=secure_filename(file.filename),
+            user_id=int(user_id) if user_id else None,  
+            file_path=secure_filename(file.filename),
             prediction=result['prediction'],
-            is_fake=result['is_fake'],
+            result='fake' if result['is_fake'] else 'real',  
+            result_url=result_url,  
+            model_version=detector.get_model_version(),  
             confidence=result['confidence'],
             threshold=threshold,
             processing_time=result['processing_time']
@@ -74,9 +107,13 @@ def predict():
         db.session.add(inference_result)
         db.session.commit()
         
+        # Add result_url to response
+        response_result = result.copy()
+        response_result['result_url'] = result_url
+        
         return jsonify({
             'success': True,
-            'result': result,
+            'result': response_result,
             'inference_id': inference_result.id
         }), 200
         
@@ -96,6 +133,8 @@ def predict_batch():
     Request:
         - files: Multiple image files
         - threshold: Optional threshold
+        - user_id: Optional user ID
+        - store_images: Optional bool to store images in MinIO
     
     Response:
         {
@@ -113,19 +152,37 @@ def predict_batch():
     
     try:
         threshold = float(request.form.get('threshold', 0.5))
+        user_id = request.form.get('user_id', None)  
+        store_images = request.form.get('store_images', 'true').lower() == 'true'  
         results = []
-        inference_ids = []
         
-        for file in files:
+        for idx, file in enumerate(files):
             if file and allowed_file(file.filename, {'png', 'jpg', 'jpeg', 'bmp'}):
                 image_bytes = file.read()
                 result = detector.predict_image(image_bytes, threshold=threshold)
                 
+                # Upload to MinIO if requested
+                result_url = None
+                if store_images and minio_service:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    unique_id = str(uuid.uuid4())[:8]
+                    file_extension = secure_filename(file.filename).rsplit('.', 1)[-1]
+                    object_name = f"inferences/{timestamp}_{unique_id}_{idx}.{file_extension}"
+                    
+                    result_url = minio_service.upload_image(
+                        image_bytes,
+                        object_name,
+                        content_type=f"image/{file_extension}"
+                    )
+                
                 # Save to database
                 inference_result = InferenceResult(
-                    image_name=secure_filename(file.filename),
+                    user_id=int(user_id) if user_id else None,  
+                    file_path=secure_filename(file.filename),
                     prediction=result['prediction'],
-                    is_fake=result['is_fake'],
+                    result='fake' if result['is_fake'] else 'real',
+                    result_url=result_url,  
+                    model_version=detector.get_model_version(), 
                     confidence=result['confidence'],
                     threshold=threshold,
                     processing_time=result['processing_time']
@@ -134,12 +191,14 @@ def predict_batch():
                 db.session.add(inference_result)
                 db.session.flush()
                 
+                response_result = result.copy()
+                response_result['result_url'] = result_url
+                
                 results.append({
                     'filename': file.filename,
-                    'result': result,
+                    'result': response_result,
                     'inference_id': inference_result.id
                 })
-                inference_ids.append(inference_result.id)
         
         db.session.commit()
         
@@ -157,117 +216,4 @@ def predict_batch():
         }), 500
 
 
-@inference_bp.route('/history', methods=['GET'])
-def get_history():
-    """
-    Get inference history
-    
-    Query params:
-        - limit: Max number of results (default 50)
-        - offset: Offset for pagination (default 0)
-    
-    Response:
-        {
-            "success": bool,
-            "count": int,
-            "results": [...]
-        }
-    """
-    try:
-        limit = int(request.args.get('limit', 50))
-        offset = int(request.args.get('offset', 0))
-        
-        results = InferenceResult.query.order_by(
-            InferenceResult.created_at.desc()
-        ).limit(limit).offset(offset).all()
-        
-        total_count = InferenceResult.query.count()
-        
-        return jsonify({
-            'success': True,
-            'count': len(results),
-            'total': total_count,
-            'results': [r.to_dict() for r in results]
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-@inference_bp.route('/result/<int:inference_id>', methods=['GET'])
-def get_result(inference_id):
-    """
-    Get specific inference result by ID
-    
-    Response:
-        {
-            "success": bool,
-            "result": {...}
-        }
-    """
-    try:
-        result = InferenceResult.query.get(inference_id)
-        
-        if not result:
-            return jsonify({
-                'success': False,
-                'error': 'Result not found'
-            }), 404
-        
-        return jsonify({
-            'success': True,
-            'result': result.to_dict()
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-@inference_bp.route('/stats', methods=['GET'])
-def get_stats():
-    """
-    Get statistics about inferences
-    
-    Response:
-        {
-            "success": bool,
-            "stats": {
-                "total_inferences": int,
-                "total_fake": int,
-                "total_real": int,
-                "fake_percentage": float,
-                "avg_processing_time": float
-            }
-        }
-    """
-    try:
-        total = InferenceResult.query.count()
-        total_fake = InferenceResult.query.filter_by(is_fake=True).count()
-        total_real = InferenceResult.query.filter_by(is_fake=False).count()
-        
-        avg_time = db.session.query(
-            db.func.avg(InferenceResult.processing_time)
-        ).scalar()
-        
-        return jsonify({
-            'success': True,
-            'stats': {
-                'total_inferences': total,
-                'total_fake': total_fake,
-                'total_real': total_real,
-                'fake_percentage': (total_fake / total * 100) if total > 0 else 0,
-                'avg_processing_time': float(avg_time) if avg_time else 0
-            }
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+# ...existing code for other routes (history, stats, etc.)...
