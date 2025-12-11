@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 from api.models.database import db, InferenceResult
 from api.services.inference_service import detector
-from api.services.minio_service import MinioService  # ⬅
+from api.services.minio_service import MinioService  
 from datetime import datetime
 import uuid
 

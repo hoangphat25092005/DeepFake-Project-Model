@@ -20,6 +20,13 @@ class D3ModelService:
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
+        self.model_version = 'v1.0'
+
+    def set_model_version(self, version: str):
+        self.model_version = version
+
+    def get_model_version(self) -> str:
+        return self.model_version
 
     def load_model(self, checkpoint_path: str, model_name: str = 'd3net'):
         try:
@@ -135,4 +142,6 @@ class D3ModelService:
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
 
+        return self.load_model(checkpoint_path, model_name)
+    
     

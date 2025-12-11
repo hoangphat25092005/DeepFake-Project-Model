@@ -16,20 +16,19 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
 # Virtual Environment
 venv/
-ENV/
 env/
-.venv
-
-# Environment variables
-.env
-.env.local
-.env.example
+ENV/
+env.bak/
+venv.bak/
 
 # IDE
 .vscode/
@@ -37,25 +36,74 @@ env/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Logs
-*.log
-logs/
+# Environment variables
+.env
+.env.local
+.env.*.local
 
-# Database
-*.db
-*.sqlite3
-
-# Model checkpoints (optional - if you don't want to upload large files)
+# Model checkpoints (large files)
+checkpoints/
 *.pth
 *.pt
 *.ckpt
+*.h5
+*.pkl
+
+# Data
+data/
+datasets/
+*.csv
+*.json
+*.txt
+
+# Logs
+logs/
+*.log
 
 # Uploads
 uploads/
 temp/
-EOF
+tmp/
+
+# MinIO data
+~/minio/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Test files
+test_*.jpg
+test_*.png
+test_images/
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Flask
+instance/
+.webassets-cache
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Environments
+.env
+.venv
