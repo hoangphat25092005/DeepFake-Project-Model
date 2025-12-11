@@ -3,7 +3,7 @@
 Advanced deepfake detection system using D³ (Diverse Deepfake Detection) with CLIP architecture, PostgreSQL database, and MinIO object storage.
 
 <p align="center">
-  <img src="../docs/images/api-architecture.jpg">
+  <img src="../docs/images/api-architecture.png">
 </p>
 
 ## Features
