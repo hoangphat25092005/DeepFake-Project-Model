@@ -86,7 +86,7 @@ class MinioHandler:
             
         except S3Error as e:
             print(f"Upload error: {e}")
-            raise
+            raise Exception("Failed to upload result image to MinIO")
     
     def _create_result_image(self, image, prediction_data):
         """
