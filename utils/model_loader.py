@@ -1,5 +1,11 @@
 import sys
 import os
+import io
+import cv2
+import csv
+import time
+from PIL import Image
+import numpy as np
 import torch
 import torchvision.transforms as transforms
 
@@ -112,3 +118,164 @@ class D3ModelLoader:
             result = self.predict(image)
             results.append(result)
         return results
+    
+
+    def extract_frames(self, video_path, sample_rate=30, max_frames=None):
+        """
+        Extract frames from a video file.
+
+        Args:
+            video_path: Path to video file
+            sample_rate: Extract every Nth frame
+            max_frames: Maximum number of frames to extract
+
+        Returns:
+            frames: List of PIL.Image frames
+            metadata: Dict with video info
+        """
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        duration = total_frames / fps if fps > 0 else 0
+
+        frames = []
+        frame_indices = []
+        current_frame = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if current_frame % sample_rate == 0:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_frame = Image.fromarray(frame_rgb)
+                frames.append(pil_frame)
+                frame_indices.append(current_frame)
+                if max_frames and len(frames) >= max_frames:
+                    break
+            current_frame += 1
+        cap.release()
+
+        metadata = {
+            'fps': fps,
+            'total_frames': total_frames,
+            'width': width,
+            'height': height,
+            'duration_seconds': duration,
+            'frames_extracted': len(frames),
+            'frame_indices': frame_indices
+        }
+        return frames, metadata
+
+    def predict_video(
+        self,
+        video_path,
+        sample_rate=30,
+        max_frames=None,
+        aggregation='mean',
+        batch_size=8
+    ):
+        """
+        Predict if video is fake or real by analyzing frames.
+
+        Args:
+            video_path: Path to video file
+            sample_rate: Process every Nth frame
+            max_frames: Maximum frames to process
+            aggregation: Aggregation method ('mean', 'median', 'max', 'voting')
+            batch_size: Batch size for frame prediction
+
+        Returns:
+            Video prediction result dictionary
+        """
+        frames, metadata = self.extract_frames(video_path, sample_rate, max_frames)
+        if not frames:
+            raise ValueError("No frames extracted from video")
+
+        # Batch prediction
+        predictions = []
+        for i in range(0, len(frames), batch_size):
+            batch = frames[i:i+batch_size]
+            batch_results = self.predict_batch(batch)
+            predictions.extend(batch_results)
+
+        # Aggregate
+        fake_scores = [p['fake_score'] for p in predictions]
+        real_scores = [p['real_score'] for p in predictions]
+
+        if aggregation == 'mean':
+            avg_fake = np.mean(fake_scores)
+            avg_real = np.mean(real_scores)
+        elif aggregation == 'median':
+            avg_fake = np.median(fake_scores)
+            avg_real = np.median(real_scores)
+        elif aggregation == 'max':
+            avg_fake = np.max(fake_scores)
+            avg_real = 1 - avg_fake
+        elif aggregation == 'voting':
+            fake_votes = sum(1 for p in predictions if p['is_fake'])
+            avg_fake = fake_votes / len(predictions)
+            avg_real = 1 - avg_fake
+        else:
+            raise ValueError(f"Unknown aggregation method: {aggregation}")
+
+        is_fake = avg_fake > avg_real
+        confidence = max(avg_fake, avg_real)
+        fake_count = sum(1 for p in predictions if p['is_fake'])
+        real_count = len(predictions) - fake_count
+        avg_confidence = np.mean([p['confidence'] for p in predictions])
+
+        return {
+            'video_prediction': {
+                'label': 'FAKE' if is_fake else 'REAL',
+                'is_fake': bool(is_fake),
+                'confidence': float(confidence),
+                'fake_score': float(avg_fake),
+                'real_score': float(avg_real)
+            },
+            'video_metadata': metadata,
+            'frame_statistics': {
+                'total_analyzed': len(predictions),
+                'fake_frames': fake_count,
+                'real_frames': real_count,
+                'fake_percentage': round(fake_count / len(predictions) * 100, 2),
+                'real_percentage': round(real_count / len(predictions) * 100, 2),
+                'average_confidence': float(avg_confidence)
+            },
+            'aggregation_method': aggregation
+        }
+
+    def upload_frame_results_csv(self, frame_predictions, result_filename):
+        try:
+            output = io.StringIO()
+            writer = csv.writer(output, fieldnames=['frame_index', 'timestamp', 'prediction', 'real_score'])
+            writer.writeheader()
+            for row in frame_predictions:
+                writer.writerow(row)
+            output.seek(0)
+            data = io.BytesIO(output.read(), encoding=('utf-8'))
+            file_size = data.getbuffer().nbytes
+
+            self.client.put_object(
+                self.bucket_name,
+                result_filename,
+                data,
+                file_size,
+                content_type='text/csv'
+            )
+
+            url = self.client.presigned_get_object(
+                self.bucket_name,
+                result_filename,
+                expires=timedelta(days=7)
+            )
+            print(f"Uploaded frame results CSV: {result_filename}")
+            return url
+        except S3Error as e:
+            print(f"Upload error: {e}")
+            raise Exception("Failed to upload frame results CSV to MinIO")

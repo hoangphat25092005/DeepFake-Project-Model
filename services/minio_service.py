@@ -177,6 +177,65 @@ class MinioHandler:
         except S3Error as e:
             print(f"Upload error: {e}")
             raise
+
+    def upload_video(self, file_path, object_name, content_type='video/mp4'):
+        """
+        Upload a video file to MinIO.
+
+        Args:
+            file_path: Path to the video file on disk
+            object_name: Filename to use in MinIO
+            content_type: MIME type (default: video/mp4)
+
+        Returns:
+            str: Presigned URL to access the video (valid for 7 days)
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                file_size = os.path.getsize(file_path)
+                self.client.put_object(
+                    self.bucket_name,
+                    object_name,
+                    f,
+                    file_size,
+                    content_type=content_type
+                )
+            url = self.client.presigned_get_object(
+                self.bucket_name,
+                object_name,
+                expires=timedelta(days=7)
+            )
+            print(f"Uploaded video: {object_name}")
+            return url
+        except S3Error as e:
+            print(f"Upload error: {e}")
+            raise Exception("Failed to upload video to MinIO")
+        
+    def upload_frame_results_json(self, frame_predictions, result_filename):
+        """Upload frame results as JSON to MinIO"""
+        import json
+        try:
+            data = io.BytesIO(json.dumps(frame_predictions).encode('utf-8'))
+            file_size = data.getbuffer().nbytes
+
+            self.client.put_object(
+                self.bucket_name,
+                result_filename,
+                data,
+                file_size,
+                content_type='application/json'
+            )
+
+            url = self.client.presigned_get_object(
+                self.bucket_name,
+                result_filename,
+                expires=timedelta(days=7)
+            )
+            print(f"Uploaded frame results JSON: {result_filename}")
+            return url
+        except S3Error as e:
+            print(f"Upload error: {e}")
+            raise Exception("Failed to upload frame results JSON to MinIO")
     
     def get_file_url(self, object_name, expires_days=7):
         """Get presigned URL for existing file"""

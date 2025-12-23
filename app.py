@@ -21,9 +21,10 @@ from api.utils.model_loader import D3ModelLoader
 from api.services.minio_service import MinioHandler
 
 # Import routes
-from api.routes import health_bp, prediction_bp
+from api.routes import health_bp, prediction_bp, video_prediction_bp
 from api.routes.health_check_route import init_health_routes
 from api.routes.prediction_route import init_prediction_routes
+from api.routes.video_prediction_route import init_video_routes
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -68,6 +69,14 @@ swagger_template = {
         {
             "name": "Prediction",
             "description": "Deepfake detection endpoints"
+        }, 
+        {
+            "name": "Video Prediction",
+            "description": "Video deepfake detection endpoints"
+        }, 
+        {
+            "name": "Video Upload",
+            "description": "Video upload endpoints"
         }
     ]
 }
@@ -105,10 +114,12 @@ except Exception as e:
 # Initialize routes with services
 init_health_routes(minio_handler)
 init_prediction_routes(model_loader, minio_handler)
+init_video_routes(model_loader, minio_handler)
 
 # Register blueprints
 app.register_blueprint(health_bp)
 app.register_blueprint(prediction_bp)
+app.register_blueprint(video_prediction_bp)
 
 # Error handlers
 @app.errorhandler(413)
