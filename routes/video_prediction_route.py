@@ -57,7 +57,7 @@ def normalize_video_prediction(result: dict):
             'fake_score': float(fake_score)
         }
 
-    # Case 3: probabilities
+    # probabilities
     if 'probabilities' in result:
         real_score = float(result['probabilities'][0])
         fake_score = float(result['probabilities'][1])
@@ -147,7 +147,7 @@ def upload_video():
 @video_prediction_bp.route('/predict', methods=['POST'])
 def predict_video():
     """
-    Predict if a video is real or fake
+    Predict if a video is real or fake with frame-level details
     ---
     tags:
       - Video Prediction
@@ -206,7 +206,7 @@ def predict_video():
 
         filename = secure_filename(file.filename)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        frame_json_name = f"frames_{timestamp}_{filename}.json"
+        result_filename = f"result_{timestamp}_{filename}.json"
 
         # --------------------------------------------------
         # 3. Save temp video
@@ -216,8 +216,9 @@ def predict_video():
             tmp_path = tmp.name
 
         try:
-            print(f"\n[VIDEO] Processing: {filename}")
+            print(f"\n[VIDEO PREDICT] Processing: {filename}")
 
+            # Run prediction
             result = model_loader.predict_video(
                 video_path=tmp_path,
                 sample_rate=sample_rate,
@@ -226,51 +227,125 @@ def predict_video():
                 aggregation=aggregation
             )
 
-            # DEBUG (remove later)
-            print("MODEL OUTPUT:", json.dumps(result, indent=2, default=str))
-
-            prediction = normalize_video_prediction(result)
-
-            # --------------------------------------------------
-            # 4. Frame results upload
-            # --------------------------------------------------
+            # Extract data
+            prediction = result['video_prediction']
+            video_metadata = result.get('video_metadata', {})
+            frame_statistics = result.get('frame_statistics', {})
             frame_predictions = result.get('frame_predictions', [])
-            frame_results_url = None
-
-            if frame_predictions:
-                frame_results_url = minio_handler.upload_frame_results_json(
-                    frame_predictions=frame_predictions,
-                    result_filename=frame_json_name
-                )
 
             # --------------------------------------------------
-            # 5. Response
+            # 4. Format frame predictions (like image route)
+            # --------------------------------------------------
+            frames_with_labels = []
+            for i, frame_pred in enumerate(frame_predictions):
+                frames_with_labels.append({
+                    'frame_number': i + 1,
+                    'frame_index': frame_pred.get('frame_index', i * sample_rate),
+                    'timestamp': round(frame_pred.get('frame_index', i * sample_rate) / video_metadata.get('fps', 30), 2),
+                    'label': 'FAKE' if frame_pred.get('is_fake', False) else 'REAL',
+                    'is_fake': frame_pred.get('is_fake', False),
+                    'confidence': round(float(frame_pred.get('confidence', 0)), 4),
+                    'scores': {
+                        'real': round(float(frame_pred.get('real_score', 0)), 4),
+                        'fake': round(float(frame_pred.get('fake_score', 0)), 4)
+                    }
+                })
+
+            # --------------------------------------------------
+            # 5. Prepare full result for MinIO upload
+            # --------------------------------------------------
+            full_result = {
+                'filename': filename,
+                'timestamp': datetime.now().isoformat(),
+                'prediction': {
+                    'label': prediction['label'],
+                    'is_fake': prediction['is_fake'],
+                    'confidence': round(float(prediction['confidence']), 4),
+                    'scores': {
+                        'real': round(float(prediction['real_score']), 4),
+                        'fake': round(float(prediction['fake_score']), 4)
+                    }
+                },
+                'video_metadata': {
+                    'filename': filename,
+                    'duration_seconds': video_metadata.get('duration_seconds'),
+                    'fps': video_metadata.get('fps'),
+                    'resolution': f"{video_metadata.get('width')}x{video_metadata.get('height')}",
+                    'total_frames': video_metadata.get('total_frames'),
+                    'frames_analyzed': video_metadata.get('frames_extracted')
+                },
+                'frame_statistics': {
+                    'total_analyzed': frame_statistics.get('total_analyzed'),
+                    'fake_frames': frame_statistics.get('fake_frames'),
+                    'real_frames': frame_statistics.get('real_frames'),
+                    'fake_percentage': frame_statistics.get('fake_percentage'),
+                    'real_percentage': frame_statistics.get('real_percentage'),
+                    'average_confidence': round(float(frame_statistics.get('average_confidence', 0)), 4)
+                },
+                'frames': frames_with_labels,
+                'aggregation_method': result.get('aggregation_method')
+            }
+
+            # --------------------------------------------------
+            # 6. Upload full result to MinIO
+            # --------------------------------------------------
+            print("  Uploading result to MinIO...")
+            result_url = minio_handler.upload_result_json(
+                data=full_result,
+                result_filename=result_filename
+            )
+            print(f"  Uploaded result: {result_filename}")
+
+            print(f"  Complete! Result: {prediction['label']} ({prediction['confidence']:.2%})")
+
+            # --------------------------------------------------
+            # 7. Return response (similar to image route)
             # --------------------------------------------------
             return jsonify({
                 'success': True,
                 'filename': filename,
                 'timestamp': datetime.now().isoformat(),
-
+                
+                # Main prediction
                 'prediction': {
                     'label': prediction['label'],
                     'is_fake': prediction['is_fake'],
-                    'confidence': round(prediction['confidence'], 4),
+                    'confidence': round(float(prediction['confidence']), 4),
                     'scores': {
-                        'real': round(prediction['real_score'], 4),
-                        'fake': round(prediction['fake_score'], 4)
+                        'real': round(float(prediction['real_score']), 4),
+                        'fake': round(float(prediction['fake_score']), 4)
                     }
                 },
 
-                'video_info': {
-                    'duration_sec': result.get('video_metadata', {}).get('duration'),
-                    'fps': result.get('video_metadata', {}).get('fps'),
-                    'total_frames': result.get('video_metadata', {}).get('total_frames'),
-                    'processed_frames': result.get('frame_statistics', {}).get('processed')
+                # Video metadata
+                'video_metadata': {
+                    'filename': filename,
+                    'duration_seconds': video_metadata.get('duration_seconds'),
+                    'fps': video_metadata.get('fps'),
+                    'resolution': f"{video_metadata.get('width')}x{video_metadata.get('height')}",
+                    'total_frames': video_metadata.get('total_frames'),
+                    'frames_analyzed': video_metadata.get('frames_extracted')
                 },
 
-                'frame_results_url': frame_results_url,
-                'aggregation_method': result.get('aggregation_method', aggregation),
-                'note': 'Frame-level predictions are stored as JSON for later retrieval'
+                # Frame statistics
+                'frame_statistics': {
+                    'total_analyzed': frame_statistics.get('total_analyzed'),
+                    'fake_frames': frame_statistics.get('fake_frames'),
+                    'real_frames': frame_statistics.get('real_frames'),
+                    'fake_percentage': frame_statistics.get('fake_percentage'),
+                    'real_percentage': frame_statistics.get('real_percentage'),
+                    'average_confidence': round(float(frame_statistics.get('average_confidence', 0)), 4)
+                },
+
+                # Frame-level predictions (NEW!)
+                'frames': frames_with_labels,
+
+                # Storage
+                'result_url': result_url,
+                'result_filename': result_filename,
+                'aggregation_method': result.get('aggregation_method'),
+                
+                'note': 'Save result_url to database for later retrieval. Each frame includes label and confidence scores.'
             })
 
         finally:
@@ -278,5 +353,6 @@ def predict_video():
                 os.remove(tmp_path)
 
     except Exception as e:
+        print(f"\n[ERROR] Video prediction failed: {e}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500

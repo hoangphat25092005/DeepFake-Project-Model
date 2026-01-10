@@ -4,6 +4,7 @@ import os
 from datetime import timedelta
 from dotenv import load_dotenv
 import io
+import json
 from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
@@ -16,7 +17,7 @@ class MinioHandler:
         self.access_key = os.getenv('MINIO_ACCESS_KEY')
         self.secret_key = os.getenv('MINIO_SECRET_KEY')
         self.secure = os.getenv('MINIO_SECURE', 'False').lower() == 'true'
-        self.bucket_name = os.getenv('MINIO_BUCKET', 'deepfake-results')
+        self.bucket_name = os.getenv('MINIO_BUCKET_NAME', 'deepfake-results')
         
         print(f"[MinIO] Initializing...")
         print(f"  Endpoint: {self.endpoint}")
@@ -87,6 +88,46 @@ class MinioHandler:
         except S3Error as e:
             print(f"Upload error: {e}")
             raise Exception("Failed to upload result image to MinIO")
+        
+
+    def upload_result_json(self, data, result_filename):
+        """
+        Upload a JSON result file to MinIO.
+
+        Args:
+            data: dict to be saved as JSON
+            result_filename: filename for storage (e.g., "result_20241209_120000_test.json")
+
+        Returns:
+            str: Presigned URL to access the result JSON (valid for 7 days)
+        """
+        try:
+            # Convert dict to JSON bytes
+            json_str = json.dumps(data, indent=2)
+            json_bytes = io.BytesIO(json_str.encode('utf-8'))
+            file_size = len(json_str.encode('utf-8'))
+
+            # Upload to MinIO
+            self.client.put_object(
+                self.bucket_name,
+                result_filename,
+                json_bytes,
+                file_size,
+                content_type='application/json'
+            )
+        # Get presigned URL (valid for 7 days)
+            url = self.client.presigned_get_object(
+                self.bucket_name,
+                result_filename,
+                expires=timedelta(days=7)
+            )
+            
+            print(f"  Uploaded result: {result_filename}")
+            return url
+
+        except S3Error as e:
+            print(f"  Upload error: {e}")
+            raise Exception(f"Failed to upload result JSON to MinIO: {e}")
     
     def _create_result_image(self, image, prediction_data):
         """
