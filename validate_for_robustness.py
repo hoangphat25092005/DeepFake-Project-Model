@@ -1,30 +1,18 @@
 import os
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-import argparse
-from ast import arg
-import os
-import csv
+
 import torch
 import torchvision.transforms as transforms
 import torch.utils.data
 import numpy as np
-from sklearn.metrics import average_precision_score, precision_recall_curve, accuracy_score
+from sklearn.metrics import average_precision_score, accuracy_score
 from torch.utils.data import Dataset
-import sys
-from models import get_model
 from PIL import Image 
-import pickle
 from tqdm import tqdm
-from io import BytesIO
-from copy import deepcopy
-from dataset_paths import DATASET_PATHS
 import random
-import shutil
-from scipy.ndimage.filters import gaussian_filter
-from models.clip_models import CLIPModelShuffleAttentionPenultimateLayer
 import pandas as pd
-from calculate_global_ap import cal_global_ap
+from models.clip_models import CLIPModelShuffleAttentionPenultimateLayer
 
 
 def set_seed(SEED):
@@ -34,381 +22,428 @@ def set_seed(SEED):
     random.seed(SEED)
 
 
-MEAN = {
-    "imagenet":[0.485, 0.456, 0.406],
-    "clip":[0.48145466, 0.4578275, 0.40821073]
-}
-
-STD = {
-    "imagenet":[0.229, 0.224, 0.225],
-    "clip":[0.26862954, 0.26130258, 0.27577711]
-}
-
-
-
-
-
-def find_best_threshold(y_true, y_pred):
-    "We assume first half is real 0, and the second half is fake 1"
-
-    N = y_true.shape[0]
-
-    if y_pred[0:N//2].max() <= y_pred[N//2:N].min(): # perfectly separable case
-        return (y_pred[0:N//2].max() + y_pred[N//2:N].min()) / 2 
-
-    best_acc = 0 
-    best_thres = 0 
-    for thres in y_pred:
-        temp = deepcopy(y_pred)
-        temp[temp>=thres] = 1 
-        temp[temp<thres] = 0 
-
-        acc = (temp == y_true).sum() / N  
-        if acc >= best_acc:
-            best_thres = thres
-            best_acc = acc 
+def find_test_folders(root_dir):
+    """Automatically find test data folders"""
+    print(f"🔍 Searching for test data in: {root_dir}")
     
-    return best_thres
+    possible_folders = []
+    
+    # Walk through directory to find real/fake pairs
+    for root, dirs, files in os.walk(root_dir):
+        # Skip hidden directories and common non-data dirs
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['__pycache__', 'api', 'models']]
         
-
- 
-def png2jpg(img, quality):
-    out = BytesIO()
-    img.save(out, format='jpeg', quality=quality) # ranging from 0-95, 75 is default
-    img = Image.open(out)
-    # load from memory before ByteIO closes
-    img = np.array(img)
-    out.close()
-    return Image.fromarray(img)
-
-
-def gaussian_blur(img, sigma):
-    img = np.array(img)
-
-    gaussian_filter(img[:,:,0], output=img[:,:,0], sigma=sigma)
-    gaussian_filter(img[:,:,1], output=img[:,:,1], sigma=sigma)
-    gaussian_filter(img[:,:,2], output=img[:,:,2], sigma=sigma)
-
-    return Image.fromarray(img)
-
-
-
-def calculate_acc(y_true, y_pred, thres):
-    r_acc = accuracy_score(y_true[y_true==0], y_pred[y_true==0] > thres)
-    f_acc = accuracy_score(y_true[y_true==1], y_pred[y_true==1] > thres)
-    acc = accuracy_score(y_true, y_pred > thres)
-    return r_acc, f_acc, acc    
-
-
-def validate(model, loader, find_thres=False, data_augment=None, threshold=0.5):
-    drop_out_rate = 0.0
-    shuffle_rate = 0.0
-    if hasattr(model, 'drop_out_rate') and model.drop_out_rate != 0.0:
-        drop_out_rate = model.drop_out_rate
-        model.drop_out_rate = 0.0
-    if hasattr(model, 'shuffle_rate') and model.shuffle_rate != 0.0:
-        shuffle_rate = model.shuffle_rate
-        model.shuffle_rate = 0.0
-
-    with torch.no_grad():
-        y_true, y_pred = [], []
-        print ("Length of dataset: %d" %(len(loader)))
-        for img, label in loader:
-            in_tens = img.cuda()
-            if data_augment != None:
-                in_tens = data_augment(in_tens)
-            y_pred_temp = model(in_tens)
-            if y_pred_temp.shape[-1] == 2:
-                # anomaly
-                # y_pred_temp = torch.absolute(y_pred_temp[:, 1] - y_pred_temp[:, 0])
-                y_pred_temp = y_pred_temp[:, 0]
-            y_pred.extend(y_pred_temp.sigmoid().flatten().tolist())
-            y_true.extend(label.flatten().tolist())
-    if hasattr(model, 'drop_out_rate'):
-        model.drop_out_rate = drop_out_rate
-    if hasattr(model, 'shuffle_rate'):
-        model.shuffle_rate = shuffle_rate
+        # Check if this folder contains real/fake subfolders
+        if 'real' in dirs and 'fake' in dirs:
+            real_path = os.path.join(root, 'real')
+            fake_path = os.path.join(root, 'fake')
+            
+            # Check if folders have images
+            real_images = get_image_count(real_path)
+            fake_images = get_image_count(fake_path)
+            
+            if real_images > 0 and fake_images > 0:
+                possible_folders.append({
+                    'name': root.replace(root_dir, '').strip('/'),
+                    'real_path': real_path,
+                    'fake_path': fake_path,
+                    'real_count': real_images,
+                    'fake_count': fake_images
+                })
         
-    y_true, y_pred = np.array(y_true), np.array(y_pred)
-
-    # ================== save this if you want to plot the curves =========== # 
-    # torch.save( torch.stack( [torch.tensor(y_true), torch.tensor(y_pred)] ),  'baseline_predication_for_pr_roc_curve.pth' )
-    # exit()
-    # =================================================================== #
-    
-    # Get AP 
-    ap = average_precision_score(y_true, y_pred)
-
-    # Acc based on 0.5
-    r_acc0, f_acc0, acc0 = calculate_acc(y_true, y_pred, threshold)
-    if not find_thres:
-        return ap, r_acc0, f_acc0, acc0
-
-
-    # Acc based on the best thres
-    best_thres = find_best_threshold(y_true, y_pred)
-    r_acc1, f_acc1, acc1 = calculate_acc(y_true, y_pred, best_thres)
-
-    return ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres, y_pred, y_true
-
-
-
-def decoupled_validate(model, loader, find_thres=False, data_augment=None):
-    
-    with torch.no_grad():
-        y_true, y_orig_pred, y_shuffle_pred = [], [], []
-        print ("Length of dataset: %d" %(len(loader)))
-        for img, label in loader:
-            in_tens = img.cuda()
-            if data_augment != None:
-                in_tens = data_augment(in_tens)
-            model.set_input((in_tens, label.cuda()))
-            model.decoupled_input_forward()
-            model_output = model.output
-            orig_output = model_output[:, 1]
-            shuffle_output = model_output[:, 2]
-            y_orig_pred.extend(orig_output.sigmoid().flatten().tolist())
-            y_shuffle_pred.extend(shuffle_output.sigmoid().flatten().tolist())
-            y_true.extend(label.flatten().tolist())
-
-    y_true, y_orig_pred, y_shuffle_pred = np.array(y_true), np.array(y_orig_pred), np.array(y_shuffle_pred)
-    avg_pred = np.array([(y_orig_pred[i]+y_shuffle_pred[i])/2 for i in range(len(y_orig_pred))])
-    pred = [y_orig_pred, y_shuffle_pred, avg_pred]
-
-    # ================== save this if you want to plot the curves =========== # 
-    # torch.save( torch.stack( [torch.tensor(y_true), torch.tensor(y_pred)] ),  'baseline_predication_for_pr_roc_curve.pth' )
-    # exit()
-    # =================================================================== #
-    
-    # Get AP 
-    ap = [average_precision_score(y_true, p) for p in pred]
-
-
-    # Acc based on 0.5
-    acc = [calculate_acc(y_true, p, 0.5)[2] for p in pred]
-    # r_acc0, f_acc0, orig_acc0 = calculate_acc(y_true, y_orig_pred, 0.5)
-    # r_acc0, f_acc0, orig_acc0 = calculate_acc(y_true, y_orig_pred, 0.5)
-    # r_acc0, f_acc0, orig_acc0 = calculate_acc(y_true, y_orig_pred, 0.5)
-    if not find_thres:
-        return ap, acc
-
-
-    # Acc based on the best thres
-    best_thres = find_best_threshold(y_true, y_orig_pred)
-    r_acc1, f_acc1, acc1 = calculate_acc(y_true, y_orig_pred, best_thres)
-
-    return ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres
-
-    
-    
-
-
-
-# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = # 
-
-
-
-
-def recursively_read(rootdir, must_contain, exts=["png", "jpg", "JPEG", "jpeg", "bmp", "PNG"]):
-    out = [] 
-    for r, d, f in os.walk(rootdir):
-        for file in f:
-            if (file.split('.')[1] in exts)  and  (must_contain in os.path.join(r, file)):
-                out.append(os.path.join(r, file))
-    return out
-
-
-def get_list(path, must_contain=''):
-    if ".pickle" in path:
-        with open(path, 'rb') as f:
-            image_list = pickle.load(f)
-        image_list = [ item for item in image_list if must_contain in item   ]
-    else:
-        image_list = recursively_read(path, must_contain)
-    return image_list
-
-
-
-
-
-class RealFakeDataset(Dataset):
-    def __init__(self,  real_path, 
-                        fake_path, 
-                        max_sample,
-                        arch,
-                        jpeg_quality=None,
-                        gaussian_sigma=None,
-                        is_norm=True):
-
-        self.jpeg_quality = jpeg_quality
-        self.gaussian_sigma = gaussian_sigma
+        # Check for numbered folders (0_real, 1_fake pattern)
+        real_dirs = [d for d in dirs if 'real' in d.lower() or d.endswith('_0')]
+        fake_dirs = [d for d in dirs if 'fake' in d.lower() or d.endswith('_1')]
         
-        # = = = = = = data path = = = = = = = = = # 
-        if type(real_path) == str and type(fake_path) == str:
-            real_list, fake_list = self.read_path(real_path, fake_path, max_sample)
-        else:
-            real_list = []
-            fake_list = []
-            for real_p, fake_p in zip(real_path, fake_path):
-                real_l, fake_l = self.read_path(real_p, fake_p, max_sample)
-                real_list += real_l
-                fake_list += fake_l
-
-        self.total_list = real_list + fake_list
-
-
-        # = = = = = =  label = = = = = = = = = # 
-
-        self.labels_dict = {}
-        for i in real_list:
-            self.labels_dict[i] = 0
-        for i in fake_list:
-            self.labels_dict[i] = 1
-
-        stat_from = "imagenet" if arch.lower().startswith("imagenet") else "clip"
-        if is_norm:
-            self.transform = transforms.Compose([
-                # transforms.CenterCrop(224),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize( mean=MEAN[stat_from], std=STD[stat_from] ),
-            ])
-        else:
-            self.transform = transforms.Compose([
-                # transforms.CenterCrop(224),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                # transforms.Normalize( mean=MEAN[stat_from], std=STD[stat_from] ),
-            ])
+        for real_dir in real_dirs:
+            for fake_dir in fake_dirs:
+                real_path = os.path.join(root, real_dir)
+                fake_path = os.path.join(root, fake_dir)
+                
+                real_images = get_image_count(real_path)
+                fake_images = get_image_count(fake_path)
+                
+                if real_images > 0 and fake_images > 0:
+                    possible_folders.append({
+                        'name': f"{root.replace(root_dir, '').strip('/')}/{real_dir}+{fake_dir}",
+                        'real_path': real_path,
+                        'fake_path': fake_path,
+                        'real_count': real_images,
+                        'fake_count': fake_images
+                    })
+    
+    return possible_folders
 
 
-    def read_path(self, real_path, fake_path, max_sample):
-
-        real_list = get_list(real_path, must_contain='')
-        fake_list = get_list(fake_path, must_contain='')
-
-
-
-        if max_sample is not None:
-            if (max_sample > len(real_list)) or (max_sample > len(fake_list)):
-                max_sample = 100
-                print("not enough images, max_sample falling to 100")
-            random.shuffle(real_list)
-            random.shuffle(fake_list)
-            real_list = real_list[0:max_sample]
-            fake_list = fake_list[0:max_sample]
-        else:
-            max_sample = min(len(fake_list), len(real_list))
-            random.shuffle(real_list)
-            random.shuffle(fake_list)
-            real_list = real_list[0:max_sample]
-            fake_list = fake_list[0:max_sample]
-        assert len(real_list) == len(fake_list)  
-
-        return real_list, fake_list
+def get_image_count(folder_path):
+    """Count images in a folder"""
+    if not os.path.exists(folder_path):
+        return 0
+    
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'}
+    count = 0
+    
+    try:
+        for file in os.listdir(folder_path):
+            if any(file.lower().endswith(ext) for ext in image_extensions):
+                count += 1
+    except PermissionError:
+        return 0
+    
+    return count
 
 
+def get_image_files(folder_path, max_files=None):
+    """Get list of image files from folder"""
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'}
+    image_files = []
+    
+    if not os.path.exists(folder_path):
+        return image_files
+    
+    try:
+        for file in os.listdir(folder_path):
+            if any(file.lower().endswith(ext) for ext in image_extensions):
+                image_files.append(os.path.join(folder_path, file))
+        
+        # Shuffle and limit
+        random.shuffle(image_files)
+        if max_files and len(image_files) > max_files:
+            image_files = image_files[:max_files]
+            
+    except PermissionError:
+        print(f"⚠️  Permission denied: {folder_path}")
+    
+    return image_files
 
+
+class SimpleRealFakeDataset(Dataset):
+    """Simple dataset for real/fake classification"""
+    
+    def __init__(self, real_path, fake_path, max_sample=None):
+        self.transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.48145466, 0.4578275, 0.40821073],  # CLIP normalization
+                std=[0.26862954, 0.26130258, 0.27577711]
+            ),
+        ])
+
+        # Get image files
+        real_files = get_image_files(real_path, max_sample)
+        fake_files = get_image_files(fake_path, max_sample)
+        
+        print(f"Found {len(real_files)} real and {len(fake_files)} fake images")
+        
+        # Balance the dataset
+        min_count = min(len(real_files), len(fake_files))
+        if min_count == 0:
+            print(f"   ⚠️  No valid image pairs found!")
+            self.image_files = []
+            self.labels = []
+            return
+        
+        # Take equal numbers from each class
+        real_files = real_files[:min_count]
+        fake_files = fake_files[:min_count]
+        
+        # Combine and create labels
+        self.image_files = real_files + fake_files
+        self.labels = [0] * len(real_files) + [1] * len(fake_files)  # 0=real, 1=fake
+        
+        print(f"   ✅ Dataset created with {len(real_files)} real + {len(fake_files)} fake = {len(self.image_files)} total images")
+    
     def __len__(self):
-        return len(self.total_list)
-
+        return len(self.image_files)
+    
     def __getitem__(self, idx):
+        image_path = self.image_files[idx]
+        label = self.labels[idx]
         
-        img_path = self.total_list[idx]
+        try:
+            # Load and transform image
+            image = Image.open(image_path).convert('RGB')
+            image = self.transform(image)
+            return image, label
+        
+        except Exception as e:
+            print(f"Error loading {image_path}: {e}")
+            # Return a dummy black image
+            dummy_image = torch.zeros(3, 224, 224)
+            return dummy_image, label
 
-        label = self.labels_dict[img_path]
-        img = Image.open(img_path).convert("RGB")
 
-        if self.gaussian_sigma is not None:
-            img = gaussian_blur(img, self.gaussian_sigma) 
-        if self.jpeg_quality is not None:
-            img = png2jpg(img, self.jpeg_quality)
+def validate_model(model, dataloader):
+    """Run model validation with proper data type handling"""
+    model.eval()
+    
+    all_predictions = []
+    all_labels = []
+    
+    print(f"🔄 Running inference on {len(dataloader)} batches...")
+    
+    with torch.no_grad():
+        for batch_idx, (images, labels) in enumerate(tqdm(dataloader, desc="Processing")):
+            try:
+                # Move to GPU but keep as Float32 (don't convert to half)
+                images = images.cuda()  # Remove .half() here
+                
+                # Get model predictions
+                outputs = model(images)
+                
+                # Debug: Check output type and shape
+                if batch_idx == 0:
+                    print(f"   Model output shape: {outputs.shape}")
+                    print(f"   Model output type: {outputs.dtype}")
+                
+                # Convert to probabilities
+                if len(outputs.shape) > 1 and outputs.shape[-1] == 2:
+                    # If output has 2 classes, take the fake class probability
+                    probs = torch.softmax(outputs, dim=1)[:, 1]
+                elif len(outputs.shape) > 1 and outputs.shape[-1] == 1:
+                    # Single output with extra dimension
+                    probs = torch.sigmoid(outputs.squeeze(-1))
+                else:
+                    # Single output, apply sigmoid
+                    probs = torch.sigmoid(outputs)
+                
+                # Ensure probs is 1D
+                if len(probs.shape) > 1:
+                    probs = probs.flatten()
+                
+                # Collect predictions and labels
+                all_predictions.extend(probs.cpu().float().numpy())  # Convert to float32
+                all_labels.extend(labels.numpy())
+                
+                # Clear GPU memory
+                del images, outputs, probs
+                torch.cuda.empty_cache()
+                
+            except Exception as e:
+                print(f" Error in batch {batch_idx}: {e}")
+                # Print more debugging info
+                if batch_idx < 3:  # Only for first few batches to avoid spam
+                    print(f"   Image shape: {images.shape if 'images' in locals() else 'N/A'}")
+                    print(f"   Image dtype: {images.dtype if 'images' in locals() else 'N/A'}")
+                    if 'outputs' in locals():
+                        print(f"   Output shape: {outputs.shape}")
+                        print(f"   Output dtype: {outputs.dtype}")
+                continue
+    
+    if len(all_predictions) == 0:
+        print("No predictions generated!")
+        return None
+    
+    predictions = np.array(all_predictions)
+    labels = np.array(all_labels)
+    
+    print(f"   Generated {len(predictions)} predictions")
+    print(f"   Real samples: {np.sum(labels == 0)}")
+    print(f"   Fake samples: {np.sum(labels == 1)}")
+    print(f"   Prediction range: [{predictions.min():.3f}, {predictions.max():.3f}]")
+    
+    # Calculate metrics
+    try:
+        # Average Precision
+        ap = average_precision_score(labels, predictions)
+        
+        # Accuracy with different thresholds
+        thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
+        accuracies = {}
+        
+        for thresh in thresholds:
+            binary_preds = (predictions >= thresh).astype(int)
+            acc = accuracy_score(labels, binary_preds)
+            accuracies[thresh] = acc
+        
+        # Find best threshold
+        best_thresh = max(accuracies, key=accuracies.get)
+        best_acc = accuracies[best_thresh]
+        
+        results = {
+            'ap': ap,
+            'accuracies': accuracies,
+            'best_threshold': best_thresh,
+            'best_accuracy': best_acc,
+            'predictions': predictions,
+            'labels': labels
+        }
+        
+        return results
+        
+    except Exception as e:
+        print(f" Error calculating metrics: {e}")
+        return None
 
-        img = self.transform(img)
-        return img, label
 
+def main():
+    print("\n" + "="*60)
+    print(" D3 Model Validation with Auto-Discovery")
+    print("="*60)
+    
+    # Configuration
+    set_seed(418)
+    
+    root_dir = "/mnt/mmlab2024nas/danh/phatlh/D3"
+    checkpoint_path = "/mnt/mmlab2024nas/danh/phatlh/D3/ckpt/classifier.pth"
+    result_folder = "/mnt/mmlab2024nas/danh/phatlh/D3/result_inference/"
+    max_sample = 50  # Increase sample size
+    batch_size = 2   # Reduce batch size to avoid memory issues
+    
+    # Create result folder
+    os.makedirs(result_folder, exist_ok=True)
+    
+    print(f"Root directory: {root_dir}")
+    print(f"Checkpoint: {checkpoint_path}")
+    print(f"Max samples per class: {max_sample}")
+    print(f"Batch size: {batch_size}")
+    
+    # Check checkpoint
+    if not os.path.exists(checkpoint_path):
+        print(f"Checkpoint not found: {checkpoint_path}")
+        return
+    
+    # Find test data
+    print("\nSearching for test data...")
+    test_folders = find_test_folders(root_dir)
+    
+    if not test_folders:
+        print("No test data found!")
+        print("\nPlease create test data in one of these formats:")
+        print("1. folder/real/ and folder/fake/")
+        print("2. folder/0_real/ and folder/1_fake/")
+        print("3. Or specify manual paths in the script")
+        return
+    
+    print(f"\nFound {len(test_folders)} test folder(s):")
+    for i, folder in enumerate(test_folders):
+        print(f"   {i+1}. {folder['name']}")
+        print(f"      Real: {folder['real_count']} images in {folder['real_path']}")
+        print(f"      Fake: {folder['fake_count']} images in {folder['fake_path']}")
+    
+    # Load model
+    print(f"\nLoading model...")
+    try:
+        model = CLIPModelShuffleAttentionPenultimateLayer(
+            "ViT-L/14", 
+            shuffle_times=1, 
+            original_times=1, 
+            patch_size=[14]
+        )
+        
+        # Load checkpoint
+        print("Loading checkpoint...")
+        state_dict = torch.load(checkpoint_path, map_location='cpu')
+        
+        # Debug: Check what's in the checkpoint
+        print(f"Checkpoint keys: {list(state_dict.keys())}")
+        
+        model.attention_head.load_state_dict(state_dict)
+        
+        # Move to GPU but keep as Float32 (remove .half())
+        print("Moving model to GPU...")
+        model = model.cuda()  # Remove .half() here
+        model.eval()
+        
+        print("Model loaded successfully")
+        
+        # Test model with dummy input
+        print("🧪 Testing model with dummy input...")
+        dummy_input = torch.randn(1, 3, 224, 224).cuda()
+        with torch.no_grad():
+            dummy_output = model(dummy_input)
+            print(f"   Dummy output shape: {dummy_output.shape}")
+            print(f"   Dummy output type: {dummy_output.dtype}")
+        
+    except Exception as e:
+        print(f"❌ Model loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+    
+    # Run validation on each test folder
+    all_results = []
+    
+    for i, folder_info in enumerate(test_folders):
+        print(f"\n📁 Testing on folder {i+1}/{len(test_folders)}: {folder_info['name']}")
+        
+        try:
+            # Create dataset
+            dataset = SimpleRealFakeDataset(
+                real_path=folder_info['real_path'],
+                fake_path=folder_info['fake_path'],
+                max_sample=max_sample
+            )
+            
+            if len(dataset) == 0:
+                print("   ⚠️  Empty dataset, skipping...")
+                continue
+            
+            # Create dataloader
+            dataloader = torch.utils.data.DataLoader(
+                dataset, 
+                batch_size=batch_size, 
+                shuffle=False, 
+                num_workers=0
+            )
+            
+            # Run validation
+            results = validate_model(model, dataloader)
+            
+            if results is None:
+                print("Validation failed")
+                continue
+            
+            # Print results
+            print(f"Results:")
+            print(f"      Average Precision: {results['ap']:.4f}")
+            print(f"      Best Accuracy: {results['best_accuracy']:.4f} @ threshold {results['best_threshold']}")
+            print(f"      Accuracies: {', '.join(f'{t}: {a:.3f}' for t, a in results['accuracies'].items())}")
+            
+            # Store results
+            folder_result = {
+                'folder': folder_info['name'],
+                'ap': results['ap'],
+                'best_accuracy': results['best_accuracy'],
+                'best_threshold': results['best_threshold'],
+                'real_count': folder_info['real_count'],
+                'fake_count': folder_info['fake_count']
+            }
+            folder_result.update({f'acc_{t}': a for t, a in results['accuracies'].items()})
+            all_results.append(folder_result)
+            
+        except Exception as e:
+            print(f"Error processing folder: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Save results
+    if all_results:
+        results_df = pd.DataFrame(all_results)
+        excel_path = os.path.join(result_folder, 'validation_results.xlsx')
+        results_df.to_excel(excel_path, index=False)
+        
+        # Calculate averages
+        avg_ap = results_df['ap'].mean()
+        avg_acc = results_df['best_accuracy'].mean()
+        
+        print(f"\n📊 Overall Results:")
+        print(f"   Average AP: {avg_ap:.4f}")
+        print(f"   Average Best Accuracy: {avg_acc:.4f}")
+        print(f"   Results saved to: {excel_path}")
+        
+        # Print summary table
+        print(f"\n📋 Summary Table:")
+        print(results_df[['folder', 'ap', 'best_accuracy', 'best_threshold']].to_string(index=False))
+        
+    else:
+        print("❌ No successful validations completed!")
 
+    print(f"\n🎉 Validation completed!")
 
 
 
 if __name__ == '__main__':
-
-    # basic configuration
-    set_seed(418)
-    # TODO: 
-    result_folder = "/folder/for/saving/results"
-    checkpoint = "/root/to/classifier/head.pth"
-    # TODO: Your test/evaluation image folder containing "real" and "fake" subfolders
-    test_folders = ["/root/to/validation/folder1", "/root/to/validation/folder2"]
-    batch_size = 128
-    jpeg_quality = None # jpeg compression, none means no compression
-    gaussian_sigma = None # gaussian blurring, none means no blurring
-    exp_name = f"validation"
-
-    max_sample = None 
-
-    if not os.path.exists(result_folder):
-        os.makedirs(result_folder)
-
-    # create and load the detector
-    granularity = 14
-    model = CLIPModelShuffleAttentionPenultimateLayer("ViT-L/14", shuffle_times=1, original_times=1, patch_size=[granularity])
-    is_norm = True
-    print(f"using checkpoint {checkpoint}")
-    state_dict = torch.load(checkpoint, map_location='cpu')
-    model.attention_head.load_state_dict(state_dict)
-    print ("Model loaded..")
-    model.eval()
-    model.cuda()
-
-    
-    results_dict = {}
-    arch = "clip"
-
-    # data to record
-    acc_list = []
-    ap_list = []
-    b_acc_list = []
-    threshold_list = []
-    y_pred_list = []
-    y_true_list = []
-    for path in test_folders:
-        dataset = RealFakeDataset(  os.path.join(path, "real"), 
-                                    os.path.join(path, "fake"), 
-                                    max_sample, 
-                                    arch,
-                                    jpeg_quality=jpeg_quality, 
-                                    gaussian_sigma=gaussian_sigma,
-                                    is_norm=is_norm
-                                    )
-
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-        ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres, y_pred, y_true = validate(model, loader, find_thres=True)
-        print(acc0)
-
-        acc_list.append(acc0)
-        ap_list.append(ap)
-        b_acc_list.append(acc1)
-        threshold_list.append(best_thres)
-        y_pred_list.append(y_pred)
-        y_true_list.append(y_true)
-
-    acc_list.append(sum(acc_list)/len(acc_list))
-    ap_list.append(sum(ap_list)/len(ap_list))
-    b_acc_list.append(sum(b_acc_list)/len(b_acc_list))
-    threshold_list.append(sum(threshold_list)/len(threshold_list))
-
-    results_dict[f'{gaussian_sigma}_{jpeg_quality}_ap'] = ap_list
-    results_dict[f'{gaussian_sigma}_{jpeg_quality}_acc'] = acc_list
-    results_dict[f'{gaussian_sigma}_{jpeg_quality}_b_acc'] = b_acc_list
-    results_dict[f'{gaussian_sigma}_{jpeg_quality}_b_threshold'] = threshold_list
-    results_df = pd.DataFrame(results_dict)
-    results_df.to_excel(os.path.join(result_folder, f'{exp_name}.xlsx'), sheet_name='sheet1', index=False)
-
-    np.savez(os.path.join(result_folder, f'{gaussian_sigma}_{jpeg_quality}_ypred.npz'), *y_pred_list)
-    np.savez(os.path.join(result_folder, f'{gaussian_sigma}_{jpeg_quality}_ytrue.npz'), *y_true_list)
-    
-    # calculating global ap
-    combined_list = [[y_p, y_t] for y_p, y_t in zip(y_pred_list, y_true_list)]
-
-    cal_global_ap(combined_list)
+    main()

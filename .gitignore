@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+*.safetensors
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Data
+data/WildRF/
+data/personal/
+data/*.zip
+*.zip
+*.tar
+*.tar.gz
+
+# Results
+result_inference/
+single_image_results/
+inference_visualizations/
+
+# Logs
+*.log
+logs/
+*.out
+
+# API specific (keep API code but ignore some generated files)
+api/.env
+api/logs/
+api/*.log
+api/__pycache__/
+
+# System files
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.swp
+
+# Large model files
+*.bin
+*.onnx
+*.tflite
+
+# Deployment
+d3-api.service
+d3-api-nginx.conf
+gunicorn_config.py
+
+# Documentation (generated or temporary)
+.vscode/
+docs/build/
