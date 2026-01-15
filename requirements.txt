@@ -1,0 +1,28 @@
+# Core
+Flask==2.3.0
+python-dotenv==1.0.0
+
+# API Documentation
+flasgger==0.9.7.1
+flask-cors==4.0.0
+
+# Database
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.23
+
+# Object Storage
+minio==7.2.0
+
+# Image Processing
+Pillow==10.1.0
+opencv-python==4.8.1.78
+
+# ML/DL
+torch==2.1.0
+torchvision==0.16.0
+transformers==4.35.0
+timm==0.9.12
+
+# Utilities
+requests==2.31.0
+werkzeug==2.3.0
