@@ -14,14 +14,16 @@ prediction_bp = Blueprint('prediction', __name__)
 # Will be set by app.py
 model_loader = None
 minio_handler = None
+db_service = None
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
 
 
-def init_prediction_routes(model_service, minio_service):
+def init_prediction_routes(model_service, minio_service, database_service=None):
     """Initialize prediction routes with services"""
-    global model_loader, minio_handler
+    global model_loader, minio_handler, db_service
     model_loader = model_service
     minio_handler = minio_service
+    db_service = database_service
 
 
 def allowed_file(filename):
@@ -170,7 +172,33 @@ def predict():
             prediction_data=prediction
         )
         
-        print(f"Complete!\n")
+        # Save to MongoDB database
+        if db_service:
+            print("  Saving to MongoDB...")
+            try:
+                db_record = db_service.save_prediction(
+                    filename=original_filename,
+                    minio_url=minio_url,
+                    prediction_data={
+                        'label': prediction['label'],
+                        'is_fake': prediction['is_fake'],
+                        'confidence': prediction['confidence'],
+                        'fake_score': prediction['fake_score'],
+                        'real_score': prediction['real_score']
+                    },
+                    image_info={
+                        'width': image.width,
+                        'height': image.height,
+                        'format': image.format,
+                        'size_bytes': len(image_bytes)
+                    }
+                )
+                print(f"  ✅ Saved to database with ID: {db_record.id}")
+            except Exception as db_error:
+                print(f"  ⚠️  Database save failed: {db_error}")
+                # Continue anyway - don't fail the request
+        
+        print(f"✅ Complete!\n")
         
         # Prepare response
         response = {
@@ -336,6 +364,29 @@ def batch_predict():
                     result_filename=result_filename,
                     prediction_data=prediction
                 )
+                
+                # Save to MongoDB database
+                if db_service:
+                    try:
+                        db_service.save_prediction(
+                            filename=original_filename,
+                            minio_url=minio_url,
+                            prediction_data={
+                                'label': prediction['label'],
+                                'is_fake': prediction['is_fake'],
+                                'confidence': prediction['confidence'],
+                                'fake_score': prediction['fake_score'],
+                                'real_score': prediction['real_score']
+                            },
+                            image_info={
+                                'width': image.width,
+                                'height': image.height,
+                                'format': image.format,
+                                'size_bytes': len(image_bytes)
+                            }
+                        )
+                    except Exception as db_error:
+                        print(f"    ⚠️  Database save failed: {db_error}")
                 
                 results.append({
                     'index': idx,

@@ -7,15 +7,15 @@ class Config:
     """Base configuration"""
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     
-    # PostgreSQL Configuration
-    POSTGRES_USER = os.getenv('POSTGRES_USER', 'postgres')
-    POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD', 'postgres')
-    POSTGRES_HOST = os.getenv('POSTGRES_HOST', 'localhost')
-    POSTGRES_PORT = os.getenv('POSTGRES_PORT', '5432')
-    POSTGRES_DB = os.getenv('POSTGRES_DB', 'd3_deepfake')
+    # MongoDB Configuration
+    MONGODB_URL = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/')
+    MONGODB_DATABASE = os.getenv('MONGODB_DATABASE', 'd3_deepfake')
+    MONGODB_USERNAME = os.getenv('MONGODB_USERNAME', '')
+    MONGODB_PASSWORD = os.getenv('MONGODB_PASSWORD', '')
     
-    SQLALCHEMY_DATABASE_URI = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # MongoDB connection string with authentication (if provided)
+    if MONGODB_USERNAME and MONGODB_PASSWORD:
+        MONGODB_URL = f"mongodb://{MONGODB_USERNAME}:{MONGODB_PASSWORD}@{MONGODB_URL.replace('mongodb://', '')}"
     
     # MinIO Configuration
     MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')

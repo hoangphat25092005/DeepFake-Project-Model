@@ -19,6 +19,7 @@ sys.path.insert(0, '/mnt/mmlab2024nas/danh/phatlh/D3')
 # Import services
 from api.utils.model_loader import D3ModelLoader
 from api.services.minio_service import MinioHandler
+from api.services.db_service_mongodb import DatabaseService
 
 # Import routes
 from api.routes import health_bp, prediction_bp, video_prediction_bp
@@ -96,11 +97,14 @@ print("D³ DEEPFAKE DETECTION API")
 print("="*70)
 
 try:
-    print("\n[1/2] Loading D³ model...")
+    print("\n[1/3] Loading D³ model...")
     model_loader = D3ModelLoader(checkpoint_path=CHECKPOINT_PATH)
     
-    print("\n[2/2] Connecting to MinIO...")
+    print("\n[2/3] Connecting to MinIO...")
     minio_handler = MinioHandler()
+    
+    print("\n[3/3] Connecting to MongoDB...")
+    db_service = DatabaseService()
     
     print("\n" + "="*70)
     print("API READY!")
@@ -113,7 +117,7 @@ except Exception as e:
 
 # Initialize routes with services
 init_health_routes(minio_handler)
-init_prediction_routes(model_loader, minio_handler)
+init_prediction_routes(model_loader, minio_handler, db_service)
 init_video_routes(model_loader, minio_handler)
 
 # Register blueprints

@@ -1,52 +1,53 @@
 """
 Database models for D³ Deepfake Detection API
-Stores prediction results with MinIO URLs
+MongoDB version - Stores prediction results with MinIO URLs
 """
 
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
+from typing import Optional, Dict, Any
+from bson import ObjectId
 
-Base = declarative_base()
 
-
-class PredictionRecord(Base):
+class PredictionRecord:
     """
-    Stores prediction results with MinIO URL
+    Stores prediction results with MinIO URL in MongoDB
     """
-    __tablename__ = 'predictions'
     
-    # Primary key
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    def __init__(self, **kwargs):
+        """Initialize a prediction record"""
+        self._id = kwargs.get('_id', None)
+        self.filename = kwargs.get('filename')
+        self.minio_url = kwargs.get('minio_url')
+        
+        # Prediction results
+        self.label = kwargs.get('label')
+        self.is_fake = kwargs.get('is_fake')
+        self.confidence = kwargs.get('confidence')
+        self.fake_score = kwargs.get('fake_score')
+        self.real_score = kwargs.get('real_score')
+        
+        # Image metadata
+        self.image_width = kwargs.get('image_width')
+        self.image_height = kwargs.get('image_height')
+        self.image_format = kwargs.get('image_format')
+        self.file_size = kwargs.get('file_size')
+        
+        # Model information
+        self.model_name = kwargs.get('model_name', 'D3_CLIP_ViT-L/14')
+        self.model_version = kwargs.get('model_version', 'v1.0')
+        
+        # Optional tracking
+        self.user_id = kwargs.get('user_id')
+        self.session_id = kwargs.get('session_id')
+        
+        # Timestamps
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
     
-    # File information
-    filename = Column(String(255), nullable=False, index=True)
-    minio_url = Column(Text, nullable=False)  # Presigned URL from MinIO
-    
-    # Prediction results
-    label = Column(String(10), nullable=False, index=True)  # REAL or FAKE
-    is_fake = Column(Boolean, nullable=False, index=True)
-    confidence = Column(Float, nullable=False)
-    fake_score = Column(Float, nullable=False)
-    real_score = Column(Float, nullable=False)
-    
-    # Image metadata
-    image_width = Column(Integer)
-    image_height = Column(Integer)
-    image_format = Column(String(10))  # PNG, JPEG, etc.
-    file_size = Column(Integer)  # Size in bytes
-    
-    # Model information
-    model_name = Column(String(100), default='D3_CLIP_ViT-L/14')
-    model_version = Column(String(50), default='v1.0')
-    
-    # Optional tracking
-    user_id = Column(String(100), nullable=True, index=True)
-    session_id = Column(String(100), nullable=True, index=True)
-    
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    @property
+    def id(self):
+        """Get string representation of MongoDB ObjectId"""
+        return str(self._id) if self._id else None
     
     def __repr__(self):
         return f"<PredictionRecord(id={self.id}, filename='{self.filename}', label='{self.label}', confidence={self.confidence:.2%})>"
@@ -118,31 +119,59 @@ class PredictionRecord(Base):
             'confidence': round(self.confidence, 4),
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+    
+    def to_mongo_dict(self):
+        """Convert to MongoDB document format"""
+        doc = {
+            'filename': self.filename,
+            'minio_url': self.minio_url,
+            'label': self.label,
+            'is_fake': self.is_fake,
+            'confidence': self.confidence,
+            'fake_score': self.fake_score,
+            'real_score': self.real_score,
+            'image_width': self.image_width,
+            'image_height': self.image_height,
+            'image_format': self.image_format,
+            'file_size': self.file_size,
+            'model_name': self.model_name,
+            'model_version': self.model_version,
+            'user_id': self.user_id,
+            'session_id': self.session_id,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
+        }
+        if self._id:
+            doc['_id'] = self._id
+        return doc
+    
+    @staticmethod
+    def from_mongo_dict(doc):
+        """Create PredictionRecord from MongoDB document"""
+        if not doc:
+            return None
+        return PredictionRecord(**doc)
 
 
-class BatchPrediction(Base):
+class BatchPrediction:
     """
-    Optional: Track batch prediction jobs
+    Track batch prediction jobs in MongoDB
     """
-    __tablename__ = 'batch_predictions'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    batch_id = Column(String(100), unique=True, nullable=False, index=True)
+    def __init__(self, **kwargs):
+        self._id = kwargs.get('_id', None)
+        self.batch_id = kwargs.get('batch_id')
+        self.total_images = kwargs.get('total_images', 0)
+        self.successful = kwargs.get('successful', 0)
+        self.failed = kwargs.get('failed', 0)
+        self.status = kwargs.get('status', 'processing')
+        self.user_id = kwargs.get('user_id')
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.completed_at = kwargs.get('completed_at')
     
-    # Statistics
-    total_images = Column(Integer, nullable=False)
-    successful = Column(Integer, default=0)
-    failed = Column(Integer, default=0)
-    
-    # Status
-    status = Column(String(20), default='processing')  # processing, completed, failed
-    
-    # Optional tracking
-    user_id = Column(String(100), nullable=True, index=True)
-    
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    completed_at = Column(DateTime, nullable=True)
+    @property
+    def id(self):
+        return str(self._id) if self._id else None
     
     def __repr__(self):
         return f"<BatchPrediction(id={self.id}, batch_id='{self.batch_id}', total={self.total_images}, status='{self.status}')>"
@@ -163,27 +192,49 @@ class BatchPrediction(Base):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None
         }
+    
+    def to_mongo_dict(self):
+        """Convert to MongoDB document format"""
+        doc = {
+            'batch_id': self.batch_id,
+            'total_images': self.total_images,
+            'successful': self.successful,
+            'failed': self.failed,
+            'status': self.status,
+            'user_id': self.user_id,
+            'created_at': self.created_at,
+            'completed_at': self.completed_at
+        }
+        if self._id:
+            doc['_id'] = self._id
+        return doc
+    
+    @staticmethod
+    def from_mongo_dict(doc):
+        """Create BatchPrediction from MongoDB document"""
+        if not doc:
+            return None
+        return BatchPrediction(**doc)
 
 
-class ModelMetrics(Base):
+class ModelMetrics:
     """
-    Optional: Track model performance metrics over time
+    Track model performance metrics over time in MongoDB
     """
-    __tablename__ = 'model_metrics'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    def __init__(self, **kwargs):
+        self._id = kwargs.get('_id', None)
+        self.total_predictions = kwargs.get('total_predictions', 0)
+        self.fake_predictions = kwargs.get('fake_predictions', 0)
+        self.real_predictions = kwargs.get('real_predictions', 0)
+        self.average_confidence = kwargs.get('average_confidence', 0.0)
+        self.average_fake_confidence = kwargs.get('average_fake_confidence', 0.0)
+        self.average_real_confidence = kwargs.get('average_real_confidence', 0.0)
+        self.date = kwargs.get('date', datetime.utcnow())
     
-    # Metrics
-    total_predictions = Column(Integer, default=0)
-    fake_predictions = Column(Integer, default=0)
-    real_predictions = Column(Integer, default=0)
-    
-    average_confidence = Column(Float, default=0.0)
-    average_fake_confidence = Column(Float, default=0.0)
-    average_real_confidence = Column(Float, default=0.0)
-    
-    # Time period
-    date = Column(DateTime, default=datetime.utcnow, unique=True, index=True)
+    @property
+    def id(self):
+        return str(self._id) if self._id else None
     
     def __repr__(self):
         return f"<ModelMetrics(date={self.date.date()}, total={self.total_predictions})>"
@@ -204,13 +255,25 @@ class ModelMetrics(Base):
                 'real': round(self.average_real_confidence, 4)
             }
         }
-
-
-# Create indexes for better query performance
-from sqlalchemy import Index
-
-# Composite indexes for common queries
-Index('idx_predictions_label_created', PredictionRecord.label, PredictionRecord.created_at.desc())
-Index('idx_predictions_is_fake_created', PredictionRecord.is_fake, PredictionRecord.created_at.desc())
-Index('idx_predictions_user_created', PredictionRecord.user_id, PredictionRecord.created_at.desc())
-Index('idx_predictions_session_created', PredictionRecord.session_id, PredictionRecord.created_at.desc())
+    
+    def to_mongo_dict(self):
+        """Convert to MongoDB document format"""
+        doc = {
+            'total_predictions': self.total_predictions,
+            'fake_predictions': self.fake_predictions,
+            'real_predictions': self.real_predictions,
+            'average_confidence': self.average_confidence,
+            'average_fake_confidence': self.average_fake_confidence,
+            'average_real_confidence': self.average_real_confidence,
+            'date': self.date
+        }
+        if self._id:
+            doc['_id'] = self._id
+        return doc
+    
+    @staticmethod
+    def from_mongo_dict(doc):
+        """Create ModelMetrics from MongoDB document"""
+        if not doc:
+            return None
+        return ModelMetrics(**doc)
