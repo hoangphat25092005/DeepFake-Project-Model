@@ -1122,7 +1122,7 @@ curl http://localhost:9000/minio/health/live```│   │
 
 # Reduce batch size in .env
 
-BATCH_SIZE=4MINIO_ROOT_USER=HoangPhatCs MINIO_ROOT_PASSWORD="25092005=))" \│   │
+BATCH_SIZE=4 MINIO_ROOT_USER=username MINIO_ROOT_PASSWORD=password \│   │
 
 
 
@@ -1196,7 +1196,7 @@ docker rm minio
 
 docker run -d --name minio -p 9000:9000 -p 9001:9001 \
 
-  -e "MINIO_ROOT_USER=HoangPhatCs" \
+  -e "MINIO_ROOT_USER=your_username" \
 
   -e "MINIO_ROOT_PASSWORD=your_password" \#### Background Deployment```bash
 
@@ -1230,11 +1230,7 @@ ls -lh ../checkpoints/finetune_wildrf/model_epoch_best.pthecho $! > api.pid```ba
 
 chmod 644 ../checkpoints/finetune_wildrf/model_epoch_best.pth
 
-# View logsflake8 api/
 
-# Verify MODEL_PATH in .env
-
-cat .env | grep MODEL_PATHtail -f api.log```
 
 ```
 
@@ -1246,11 +1242,6 @@ cat .env | grep MODEL_PATHtail -f api.log```
 
 **Issue**: Port 5001 or 9000 already in use
 
-### GPU Selection
-
-**Solution**:
-
-```bash### predictions table
 
 # Find process using port
 
@@ -1258,19 +1249,9 @@ lsof -i :5001```bash- `id`: Primary key
 
 lsof -i :9000
 
-# Use GPU 0 (First RTX A4000)- `original_filename`: Original image name
-
-# Kill process
-
-kill -9 <PID>CUDA_VISIBLE_DEVICES=0 ./start_manual.sh- `result_filename`: Result image name
-
-
-
-# Or change port in .env- `minio_url`: MinIO presigned URL
 
 FLASK_PORT=5002
 
-```# Use GPU 1 (Second RTX A4000)- `label`: REAL or FAKE
 
 
 
@@ -1376,7 +1357,7 @@ D3/### Base URL- `successful`: Successful predictions
 
 | `/api/v1/predictions/recent` | GET | Recent predictions |2. Create feature branch (`git checkout -b feature/amazing-feature`)
 
-## 🤝 Contributing
+## Contributing
 
 | `/api/v1/predictions/<id>` | GET | Get prediction by ID |3. Commit changes (`git commit -m 'Add amazing feature'`)
 
@@ -1424,7 +1405,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Response:**- D³ (Diverse Deepfake Detection) research
 
-## 📞 Support
+## Support
 
 ```json- OpenAI CLIP architecture
 
@@ -1444,8 +1425,8 @@ For issues, questions, or contributions:
 
 
 
-## 🙏 Acknowledgments#### Single Image Prediction
-
+## Acknowledgments
+#### Single Image Prediction
 
 
 - **D³ Model**: Based on the D³ framework for deepfake detection```bash
@@ -1464,7 +1445,7 @@ For issues, questions, or contributions:
 
 ```json
 
-**Built with ❤️ for deepfake detection research**{
+**Built for deepfake detection research**{
 
   "success": true,
   "data": {
@@ -1550,26 +1531,6 @@ result = response.json()
 print(f"Prediction: {result['data']['prediction']}")
 print(f"Confidence: {result['data']['confidence']:.2%}")
 ```
-
-### JavaScript
-
-```javascript
-// Using Fetch API
-const formData = new FormData();
-formData.append('file', fileInput.files[0]);
-formData.append('model_type', 'd3_clip');
-
-fetch('http://localhost:5001/api/v1/predict', {
-  method: 'POST',
-  body: formData
-})
-.then(response => response.json())
-.then(data => {
-  console.log('Prediction:', data.data.prediction);
-  console.log('Confidence:', data.data.confidence);
-});
-```
-
 ### cURL Batch Processing
 
 ```bash
@@ -1585,15 +1546,6 @@ curl -X POST http://localhost:5001/api/v1/predict/batch \
 
 ## 📊 Monitoring
 
-### View Logs
-
-```bash
-# API logs
-tail -f /mnt/mmlab2024nas/danh/phatlh/D3/api/api.log
-
-# MinIO logs
-tail -f ~/minio.log
-```
 
 ### Monitor GPU
 
@@ -1655,9 +1607,6 @@ nvidia-smi
 # Verify CUDA
 python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 
-# Set correct GPU
-export CUDA_VISIBLE_DEVICES=0
-```
 
 #### Model Checkpoint Not Found
 
@@ -1675,66 +1624,7 @@ ls -la /mnt/mmlab2024nas/danh/phatlh/D3/checkpoints/finetune_wildrf/model_epoch_
 python -c "from pymongo import MongoClient; client = MongoClient('your_url'); print(client.server_info())"
 
 # Check MongoDB Atlas IP whitelist
-# Verify internet connection
-```
 
-#### MinIO Connection Failed
-
-```bash
-# Check if running
-lsof -i :9000
-
-# Restart MinIO
-kill $(cat ~/minio.pid)
-MINIO_ROOT_USER=HoangPhatCs MINIO_ROOT_PASSWORD="25092005=))" \
-  nohup ~/bin/minio server ~/minio-data --address ":9000" --console-address ":9001" > ~/minio.log 2>&1 &
-```
-
-### Debug Mode
-
-Enable detailed logging:
-
-```bash
-# In .env
-FLASK_DEBUG=True
-LOG_LEVEL=DEBUG
-
-# Restart
-./stop_manual.sh
-./start_manual.sh
-```
-
----
-
-## 📚 Project Structure
-
-```
-api/
-├── app.py                      # Main Flask application
-├── .env                        # Environment configuration
-├── models/                     # Data models
-│   └── database.py            # MongoDB models
-├── routes/                     # API routes
-│   ├── prediction_route.py   # Prediction endpoints
-│   └── status_route.py        # Status endpoints
-├── services/                   # Business logic
-│   ├── model_service.py       # Model inference
-│   ├── db_service_mongodb.py # Database operations
-│   └── storage_service.py     # MinIO operations
-├── config/                     # Configuration
-│   └── config.py              # App configuration
-├── uploads/                    # Temporary uploads
-├── logs/                       # Application logs
-├── start_manual.sh            # Start script ⭐
-├── stop_manual.sh             # Stop script ⭐
-├── install_minio.sh           # MinIO installer ⭐
-├── QUICKSTART.md              # Quick start guide
-├── MANUAL_DEPLOYMENT.md       # Deployment guide
-├── NO_SUDO_DEPLOYMENT.md      # No-sudo guide
-└── README.md                  # This file
-```
-
----
 
 ## 🤝 Contributing
 
