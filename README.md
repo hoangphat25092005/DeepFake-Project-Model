@@ -1,56 +1,51 @@
-# 🎭 D³ Deepfake Detection API# 🎭 D³ Deepfake Detection API
+# 🎭 D³ Deepfake Detection API# 
 
 
 
-![Python](https://img.shields.io/badge/python-3.8+-blue.svg)![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 
-![PyTorch](https://img.shields.io/badge/PyTorch-2.0.1-red.svg)![PyTorch](https://img.shields.io/badge/PyTorch-2.0.1-red.svg)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.0.1-red.svg)
 
-![CUDA](https://img.shields.io/badge/CUDA-11.8%20%7C%2012.8-green.svg)![CUDA](https://img.shields.io/badge/CUDA-11.8%20%7C%2012.8-green.svg)
+![CUDA](https://img.shields.io/badge/CUDA-11.8%20%7C%2012.8-green.svg)
 
-![Flask](https://img.shields.io/badge/Flask-3.0.0-black.svg)![Flask](https://img.shields.io/badge/Flask-3.0.0-black.svg)
+![Flask](https://img.shields.io/badge/Flask-3.0.0-black.svg)
 
-![License](https://img.shields.io/badge/license-MIT-green.svg)![License](https://img.shields.io/badge/license-MIT-green.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 
 
-Production-ready REST API for deepfake detection using the D³-CLIP ViT-L/14 model, featuring MongoDB Atlas storage, MinIO (Docker) object storage, and GPU-accelerated inference.Production-ready REST API for deepfake detection using the D³-CLIP ViT-L/14 model, featuring MongoDB Atlas storage, MinIO (Docker) object storage, and GPU-accelerated inference.
-
+Production-ready REST API for deepfake detection using the D³-CLIP ViT-L/14 model, featuring MongoDB Atlas storage, MinIO (Docker) object storage, and GPU-accelerated inference.
 
 
 ------
 
 
 
-## 📋 Table of Contents## 📋 Table of Contents
+## 📋 Table of Contents##
 
 
 
-- [Features](#-features)- [Features](#-features)
+- [Features](#-features)
 
-- [Architecture](#-architecture)- [Architecture](#-architecture)
+- [Architecture](#-architecture)
 
-- [Requirements](#-requirements)- [Requirements](#-requirements)
+- [Requirements](#-requirements)
 
-- [Installation](#-installation)- [Installation](#-installation)
+- [Installation](#-installation)
 
-- [Configuration](#-configuration)- [Configuration](#-configuration)
+- [Configuration](#-configuration)
 
-- [API Endpoints](#-api-endpoints)- [API Endpoints](#-api-endpoints)
+- [API Endpoints](#-api-endpoints)
+- [Usage Examples](#-usage-examples)
 
-- [Usage Examples](#-usage-examples)- [Usage Examples](#-usage-examples)
-
-- [Monitoring](#-monitoring)- [Monitoring](#-monitoring)
-
-- [Troubleshooting](#-troubleshooting)- [Troubleshooting](#-troubleshooting)## ✨ Features
+- [Monitoring](#-monitoring)
+- [Troubleshooting](#-troubleshooting)
 
 - [Project Structure](#-project-structure)
 
-- [Contributing](#-contributing)- [Project Structure](#-project-structure)
+- [Contributing](#-contributing)
 
 
-
----- [Contributing](#-contributing)### Core Capabilities
 
 
 
