@@ -9,10 +9,20 @@ import numpy as np
 import torch
 import torchvision.transforms as transforms
 
+# Try to load real D3 model, fallback to stub if not available
+try:
+    from models.clip_models import CLIPModelShuffleAttentionPenultimateLayer
+    print("[INFO] Loaded real D3 CLIP model from models.clip_models")
+except (ModuleNotFoundError, ImportError) as e:
+    print(f"[WARNING] Could not load real D3 model: {e}")
+    print("[WARNING] Attempting to use stub model instead")
+    try:
+        from models_stub.clip_models import CLIPModelShuffleAttentionPenultimateLayer
+        print("[INFO] Using stub D3 CLIP model from models_stub")
+    except (ModuleNotFoundError, ImportError) as stub_error:
+        print(f"[ERROR] Could not load stub model either: {stub_error}")
+        raise
 
-sys.path.insert(0, "/mnt/mmlab2024nas/danh/phatlh/D3")
-
-from models.clip_models import CLIPModelShuffleAttentionPenultimateLayer
 
 class D3ModelLoader:
     def __init__(self, checkpoint_path, device="cuda"):
@@ -42,27 +52,28 @@ class D3ModelLoader:
                 patch_size=[14]
             )
 
-            #Load checkpoint
-            if not os.path.exists(self.checkpoint_path):
-                raise FileNotFoundError(f"Checkpoint file not found: {self.checkpoint_path}")
-            
-            checkpoint = torch.load(self.checkpoint_path, map_location='cpu')
+            # Load checkpoint if path is provided and exists
+            if self.checkpoint_path and os.path.exists(self.checkpoint_path):
+                print(f"[Info Loading D3] Loading checkpoint from {self.checkpoint_path}")
+                checkpoint = torch.load(self.checkpoint_path, map_location='cpu')
 
-            #Detect checkpoint type and load state dict accordingly
-            has_model_prefix = any(key.startswith('model.') for key in checkpoint.keys())
-            has_attention_head = any(key.startswith('model.attention_head.') for key in checkpoint.keys())
+                #Detect checkpoint type and load state dict accordingly
+                has_model_prefix = any(key.startswith('model.') for key in checkpoint.keys())
+                has_attention_head = any(key.startswith('model.attention_head.') for key in checkpoint.keys())
 
-            if has_model_prefix and has_attention_head:
-                print(f"[Info Loading D3] Loading full model from checkpoint with 'model.' prefix.")
-                model.load_state_dict(checkpoint, strict=True)
+                if has_model_prefix and has_attention_head:
+                    print(f"[Info Loading D3] Loading full model from checkpoint with 'model.' prefix.")
+                    model.load_state_dict(checkpoint, strict=True)
 
-            elif has_attention_head:
-                print("Loading attention head checkpoint ")
-                model.load_state_dict(checkpoint, strict=False)
+                elif has_attention_head:
+                    print("Loading attention head checkpoint ")
+                    model.load_state_dict(checkpoint, strict=False)
 
+                else:
+                    print(f"[Info Loading D3] Loading checkpoint without 'model.' prefix.")
+                    model.load_state_dict(checkpoint, strict=False)
             else:
-                print(f"[Info Loading D3] Loading checkpoint without 'model.' prefix.")
-                model.load_state_dict(checkpoint, strict=False)
+                print(f"[Info Loading D3] No checkpoint path provided, using model with default weights")
 
             model = model.to(self.device)
             model.eval()

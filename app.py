@@ -13,19 +13,16 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Add project root to path
-sys.path.insert(0, '/mnt/mmlab2024nas/danh/phatlh/D3')
-
 # Import services
-from api.utils.model_loader import D3ModelLoader
-from api.services.minio_service import MinioHandler
-from api.services.db_service_mongodb import DatabaseService
+from utils.model_loader import D3ModelLoader
+from services.minio_service import MinioHandler
+from services.db_service_postgres import DatabaseService
 
 # Import routes
-from api.routes import health_bp, prediction_bp, video_prediction_bp
-from api.routes.health_check_route import init_health_routes
-from api.routes.prediction_route import init_prediction_routes
-from api.routes.video_prediction_route import init_video_routes
+from routes import health_bp, prediction_bp, video_prediction_bp
+from routes.health_check_route import init_health_routes
+from routes.prediction_route import init_prediction_routes
+from routes.video_prediction_route import init_video_routes
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -103,7 +100,7 @@ try:
     print("\n[2/3] Connecting to MinIO...")
     minio_handler = MinioHandler()
     
-    print("\n[3/3] Connecting to MongoDB...")
+    print("\n[3/3] Connecting to PostgreSQL...")
     db_service = DatabaseService()
     
     print("\n" + "="*70)
